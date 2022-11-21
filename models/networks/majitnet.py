@@ -169,4 +169,5 @@ class majitNet(nn.Module):
 
 
 
+
         return ill, out0

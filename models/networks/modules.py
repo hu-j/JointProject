@@ -198,6 +198,3 @@ class Residual_Block(nn.Module):
         se = self.se(y)
         y = se + x
         return y
-
-        # y = y + x
-        # return self.relu2(y)

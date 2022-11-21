@@ -5,10 +5,6 @@ from models.metrics import PSNR, SSIM1
 from models.losses import *
 from models.networks.modules import *
 
-
-# from Bread.models.networks.modules import *
-
-
 class BaseNet(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, norm=True):
         super(BaseNet, self).__init__()
@@ -23,62 +19,6 @@ class BaseNet(nn.Module):
         self.up1 = Up(256, 64, bilinear=True, norm=norm)
         self.up2 = Up(128, 32, bilinear=True, norm=norm)
         self.up3 = Up(64, 32, bilinear=True, norm=norm)
-        self.outc = OutConv(32, out_channels)
-
-    def forward(self, x):
-        x1 = self.inc(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x = self.up1(x4, x3)
-        x = self.up2(x, x2)
-        x = self.up3(x, x1)
-        logits = self.outc(x)
-        return logits
-
-
-class IAN(BaseNet):
-    def __init__(self, in_channels=1, out_channels=1, norm=True):
-        super(IAN, self).__init__(in_channels, out_channels, norm)
-
-
-class ANSN(BaseNet):
-    def __init__(self, in_channels=1, out_channels=1, norm=True):
-        super(ANSN, self).__init__(in_channels, out_channels, norm)
-        self.outc = OutConv(32, out_channels, act=False)
-
-
-class FuseNet(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, norm=False):
-        super(FuseNet, self).__init__()
-        self.inc = AttentiveDoubleConv(in_channels, 32, norm=norm, leaky=False)
-        self.down1 = AttentiveDown(32, 64, norm=norm, leaky=False)
-        self.down2 = AttentiveDown(64, 64, norm=norm, leaky=False)
-        self.up1 = AttentiveUp(128, 32, bilinear=True, norm=norm, leaky=False)
-        self.up2 = AttentiveUp(64, 32, bilinear=True, norm=norm, leaky=False)
-        self.outc = OutConv(32, out_channels)
-
-    def forward(self, x):
-        x1 = self.inc(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x = self.up1(x3, x2)
-        x = self.up2(x, x1)
-        logits = self.outc(x)
-        return logits
-
-
-class JTN(FuseNet):
-    def __init__(self, in_channels=1, out_channels=1, norm=True):
-        super(JTN, self).__init__(in_channels, out_channels, norm)
-        self.inc = AttentiveDoubleConv(in_channels, 32, norm=norm, leaky=False)
-        self.down1 = AttentiveDown(32, 64, norm=norm, leaky=False)
-        self.down2 = AttentiveDown(64, 128, norm=norm, leaky=False)
-        self.down3 = AttentiveDown(128, 128, norm=norm, leaky=False)
-
-        self.up1 = AttentiveUp(256, 64, bilinear=True, norm=norm, leaky=False)
-        self.up2 = AttentiveUp(128, 32, bilinear=True, norm=norm, leaky=False)
-        self.up3 = AttentiveUp(64, 32, bilinear=True, norm=norm, leaky=False)
         self.outc = OutConv(32, out_channels)
 
     def forward(self, x):
@@ -186,31 +126,3 @@ class FixJTNet(nn.Module):
         y += x
         return y
 
-#
-# class EnhancementNet2(nn.Module):
-#     def __init__(self):
-#         super(EnhancementNet2, self).__init__()
-#         self.f_num = 32
-#
-#         self.pre = nn.Sequential(
-#             nn.Conv2d(3, self.f_num, 3, 1, 1),
-#             nn.InstanceNorm2d(self.f_num),
-#             nn.ReLU()
-#         )
-#
-#         self.ill_stage = nn.Sequential(
-#             Residual_Block(self.f_num * 2, self.f_num * 2, 1)
-#         )
-#
-#         self.denoising_stage = BaseNet(3, 3)
-#
-#         self.fix_stage = FixJTNet()
-#
-#     def forward(self, x, gt):
-#         x_pre = self.pre(x)
-#         # ill =
-
-
-if __name__ == '__main__':
-    for key in FuseNet(4, 2).state_dict().keys():
-        print(key)
