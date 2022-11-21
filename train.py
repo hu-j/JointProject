@@ -39,7 +39,7 @@ def get_args():
 
     parser.add_argument('-m1', '--model1', type=str, default='CPRMUDNet',
                         help='Model Name')
-    parser.add_argument('-mdet', '--detect_weight', type=str, default='./YOLOX/yolox_s.pth')
+    parser.add_argument('-mdet', '--detect_weight', type=str, default='./weights/yolox_s.pth')
 
     parser.add_argument('--comment', type=str, default='trainTest',
                         help='Project comment')
@@ -65,8 +65,8 @@ def get_args():
     # parser.add_argument('--data_path', type=str, default='/home/xteam/hj/dataset/LSRWDataset/',
     #                                         help='the root folder of dataset')
     parser.add_argument('--small', action='store_true')
-    parser.add_argument('--log_path', type=str, default='1119/weight1/')
-    parser.add_argument('--saved_path', type=str, default='1119/weight1/')
+    parser.add_argument('--log_path', type=str, default='1121/weight1/')
+    parser.add_argument('--saved_path', type=str, default='1121/weight1/')
     args = parser.parse_args()
     return args
 
@@ -353,7 +353,7 @@ def train(opt):
     val_generator = DataLoader(val_set, **val_params)
 
     # Load detection model
-    exp = get_exp_by_file('YOLOX/exps/default/yolox_s.py')
+    exp = get_exp_by_file('exps/default/yolox_s.py')
     exp.test_conf = opt.conf
     exp.nmsthre = opt.nms
     exp.test_size = (opt.tsize, opt.tsize)

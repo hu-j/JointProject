@@ -18,10 +18,6 @@ import torch
 import torchvision
 import yaml
 
-from utils.google_utils import gsutil_getsize
-from utils.metrics import fitness
-from utils.torch_utils import init_torch_seeds
-
 # Settings
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
 np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format})  # format short g, %precision=5
@@ -38,13 +34,6 @@ def set_logging(rank=-1):
     logging.basicConfig(
         format="%(message)s",
         level=logging.INFO if rank in [-1, 0] else logging.WARN)
-
-
-def init_seeds(seed=0):
-    # Initialize random number generator (RNG) seeds
-    random.seed(seed)
-    np.random.seed(seed)
-    init_torch_seeds(seed)
 
 
 def get_latest_run(search_dir='.'):
@@ -813,37 +802,6 @@ def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_op
     torch.save(x, s or f)
     mb = os.path.getsize(s or f) / 1E6  # filesize
     print(f"Optimizer stripped from {f},{(' saved as %s,' % s) if s else ''} {mb:.1f}MB")
-
-
-def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
-    # Print mutation results to evolve.txt (for use with train.py --evolve)
-    a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
-    b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
-    c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
-    print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
-
-    if bucket:
-        url = 'gs://%s/evolve.txt' % bucket
-        if gsutil_getsize(url) > (os.path.getsize('evolve.txt') if os.path.exists('evolve.txt') else 0):
-            os.system('gsutil cp %s .' % url)  # download evolve.txt if larger than local
-
-    with open('evolve.txt', 'a') as f:  # append result
-        f.write(c + b + '\n')
-    x = np.unique(np.loadtxt('evolve.txt', ndmin=2), axis=0)  # load unique rows
-    x = x[np.argsort(-fitness(x))]  # sort
-    np.savetxt('evolve.txt', x, '%10.3g')  # save sort by fitness
-
-    # Save yaml
-    for i, k in enumerate(hyp.keys()):
-        hyp[k] = float(x[0, i + 7])
-    with open(yaml_file, 'w') as f:
-        results = tuple(x[0, :7])
-        c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
-        f.write('# Hyperparameter Evolution Results\n# Generations: %g\n# Metrics: ' % len(x) + c + '\n\n')
-        yaml.dump(hyp, f, sort_keys=False)
-
-    if bucket:
-        os.system('gsutil cp evolve.txt %s gs://%s' % (yaml_file, bucket))  # upload
 
 
 def apply_classifier(x, model, img, im0):
