@@ -90,18 +90,10 @@ class EnhanceNet(nn.Module):
 
         res_input = self.intro(out1)
 
-        # res1 = self.residual1(res_input)
-        # res2 = self.residual2(res1)
-        # res3 = self.residual3(res2)
         res = self.denoising_branch(res_input)
-        # se_cat = self.se(torch.cat([res1, res2, res3], dim=1))
-        # image_out = self.conv_block(se_cat)
-        # image_out = self.conv_block(torch.cat([res1, res2, res3], dim=1))
         image_out = self.conv_block(res)
 
-        # restor_loss2 = self.illumi_loss(image_out, image_gt)
         l1_loss = self.denoise_loss(image_out, image_gt)
-        # tv_loss = self.tv_loss(image_out)
         psnr = PSNR(image_out, image_gt)
         ssim = SSIM1(image_out, image_gt)
 

@@ -72,7 +72,7 @@ def get_args():
 
 
 class ModelJT(nn.Module):
-    def __init__(self, enhan_model, det_model, exp):
+    def __init__(self, enhan_model, det_model=None, exp=None):
         super().__init__()
 
         self.exp = exp
@@ -285,15 +285,16 @@ def train(opt):
     val_generator = DataLoader(val_set, **val_params)
 
     # Load detection model
-    exp = get_exp_by_file('YOLOX/exps/default/yolox_s.py')
-    exp.test_conf = opt.conf
-    exp.nmsthre = opt.nms
-    exp.test_size = (opt.tsize, opt.tsize)
-    model_det = exp.get_model()
+    # exp = get_exp_by_file('YOLOX/exps/default/yolox_s.py')
+    # exp.test_conf = opt.conf
+    # exp.nmsthre = opt.nms
+    # exp.test_size = (opt.tsize, opt.tsize)
+    # model_det = exp.get_model()
 
     enhan_model = getattr(models, opt.model1)
 
-    model = ModelJT(enhan_model, model_det, exp)
+    # model = ModelJT(enhan_model, model_det, exp)
+    model = ModelJT(enhan_model)
     # print(model)
 
     writer = SingleSummaryWriter(log_path + f'/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}/')

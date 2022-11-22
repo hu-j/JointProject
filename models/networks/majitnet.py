@@ -24,6 +24,25 @@ class LoosenMSE(nn.Module):
         return torch.mean(F.mse_loss(x, y, reduction='none') - self.eps)
 
 
+class pyramid_demo(nn.Module):
+    def __init__(self, pyr_num=1, block_size=2):
+        super(pyramid_demo, self).__init__()
+        self.pyr_num = pyr_num
+        self.block_size = block_size
+
+    def forward(self, image):
+        x = image
+        pyramids = []
+        pyramids.append(x)
+
+        for i in range(self.pyr_num):
+            p_down = space_to_depth(x, self.block_size)
+            pyramids.append(p_down)
+            x = p_down
+
+        return pyramids
+
+
 class residual_block(nn.Module):
     def __init__(self, channels=64, stride=1, norm=nn.InstanceNorm2d):
         super(residual_block, self).__init__()
@@ -86,21 +105,21 @@ class kernel_est(nn.Module):
             residual_block(channel)
         )
         if stage > 1:
-            self.pool1 = nn.MaxPool2d(2)
+            self.pool1 = nn.MaxPool2d(2, 2)
             self.block2 = nn.Sequential(
                 residual_block(channel),
                 residual_block(channel),
                 residual_block(channel)
             )
         if stage > 2:
-            self.pool2 = nn.MaxPool2d(2)
+            self.pool2 = nn.MaxPool2d(2, 2)
             self.block3 = nn.Sequential(
                 residual_block(channel),
                 residual_block(channel),
                 residual_block(channel)
             )
         if stage > 3:
-            self.pool3 = nn.MaxPool2d(2)
+            self.pool3 = nn.MaxPool2d(2, 2)
             self.block4 = nn.Sequential(
                 residual_block(channel),
                 residual_block(channel),
@@ -136,12 +155,45 @@ class kernel_est(nn.Module):
 
 
 class illumiNet(BaseNet):
-    def __init__(self, in_channels=1, out_channels=1, norm=True):
+    def __init__(self, in_channels=3, out_channels=1, norm=True):
         super(illumiNet, self).__init__(in_channels, out_channels, norm)
 
 
-# class denoNet(nn.Module):
-#     def __init__(self):
+class preNet(nn.Module):
+    def __init__(self, channel=64):
+        super(preNet, self).__init__()
+        self.+
+
+
+class denoNet(nn.Module):
+    def __init__(self, channel=64, gz=1, stage=3, group=64, norm=nn.InstanceNorm2d):
+        super(denoNet, self).__init__()
+        self.channel = channel
+        self.gz = gz
+        self.n_in = 1
+        self.n_out = 2
+        self.group = group
+
+        self.blocks = [
+            nn.Sequential(
+                nn.AvgPool2d(2, 2),
+                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group, self.stage)
+            ) for i in range(2)
+        ]
+        self.blocks.append(
+            nn.Sequential(
+                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group * 2, self.stage)
+            )
+        )
+        self.blocks.append(
+            nn.Sequential(
+                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group * 4, self.stage)
+            )
+        )
+
+
+    def forward(self, inputs):
+
 
 
 
@@ -153,9 +205,8 @@ class majitNet(nn.Module):
         self.eps = 1e-3
         self.channel = channel
 
-        self.pre = nn.Sequential(
-            # nn.Conv2d
-        )
+        self.pyr_pre = pyramid_demo(2)
+        self.pre = preNet(self.channel)
 
         self.res_block = residual_block()
 
@@ -167,6 +218,8 @@ class majitNet(nn.Module):
         restor_loss = self.ill_loss(out0, x_gt)
         restor_loss += self.ill_loss(x_in, x_gt * ill)
 
+        pyrs = self.pyr_pre(out0)
+        # fix texture
 
 
 
