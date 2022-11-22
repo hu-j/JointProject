@@ -162,7 +162,7 @@ class illumiNet(BaseNet):
 class preNet(nn.Module):
     def __init__(self, channel=64):
         super(preNet, self).__init__()
-        self.+
+        # self.+
 
 
 class denoNet(nn.Module):

@@ -19,11 +19,11 @@ from models.networks.cprmudnet import CPRMUDNet
 from models.networks.networks import EnhanceNet
 from tools import mutils, SingleSummaryWriter, saver
 from tools.jointEvaluator import JointEvaluator
-from utils.general import scale_coords
-from utils.plots import plot_one_box
-from YOLOX.yolox.data import COCO_CLASSES
-from YOLOX.yolox.exp.build import get_exp_by_file
-from YOLOX.yolox.utils import postprocess
+from tools.general import scale_coords
+from tools.plots import plot_one_box
+from yolox.data import COCO_CLASSES
+from yolox.exp.build import get_exp_by_file
+from yolox.utils import postprocess
 
 
 def get_args():
@@ -58,12 +58,10 @@ def get_args():
     parser.add_argument('--optim', type=str, default='adam', help='select optimizer for training, '
                                                                   'suggest using \'admaw\' until the'
                                                                   ' very final stage then switch to \'sgd\'')
-    parser.add_argument('--num_epochs', type=int, default=50)
+    parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--val_interval', type=int, default=10, help='Number of epoches between valing phases')
     parser.add_argument('--data_path', type=str, default='/home/xteam/hj/dataset/LOLDataset',
                         help='the root folder of dataset')
-    # parser.add_argument('--data_path', type=str, default='/home/xteam/hj/dataset/LSRWDataset/',
-    #                                         help='the root folder of dataset')
     parser.add_argument('--small', action='store_true')
     parser.add_argument('--log_path', type=str, default='aTry/1/')
     parser.add_argument('--saved_path', type=str, default='aTry/1/')
@@ -76,21 +74,22 @@ class ModelJT(nn.Module):
         super().__init__()
 
         self.exp = exp
-        self.num_classes = exp.num_classes
-        self.confthre = exp.test_conf
-        self.nmsthre = exp.nmsthre
-        self.test_size = exp.test_size
+        if self.exp != None:
+            self.num_classes = exp.num_classes
+            self.confthre = exp.test_conf
+            self.nmsthre = exp.nmsthre
+            self.test_size = exp.test_size
 
+            self.load_detetction_weight(self.det_model, opt.detect_weight)
+            self.det_model.eval()
+
+        self.weights = opt.loss_weights
         self.det_model = det_model
         self.enhan_model = enhan_model()
         self.restor_loss = models.MSELoss()
         self.feature_matching_loss = nn.L1Loss()
         self.restoration_loss = models.MSPerL1Loss(channels=3)
         self.anchor_loss = anchorLoss()
-        self.weights = opt.loss_weights
-
-        self.load_detetction_weight(self.det_model, opt.detect_weight)
-        self.det_model.eval()
 
     def load_detetction_weight(self, model, weight_pth):
         if model is not None:
@@ -153,7 +152,6 @@ class ModelJT(nn.Module):
 
         return img
 
-    # def forward(self, image_in, image_gt, name, training=True):
     def forward(self, image_in, image_gt, training=True):
         # # gt detection
         # with torch.no_grad():
@@ -315,7 +313,7 @@ def train(opt):
     val_step = 0
 
     model.enhan_model.train()
-    model.det_model.eval()
+    # model.det_model.eval()
 
     num_iter_per_epoch = len(training_generator)
 
