@@ -6,10 +6,16 @@ from models import BaseNet, UNetIllumi
 from models.networks.modules import *
 
 
-def space_to_depth(x, block_size):
-    n, c, h, w = x.size()
-    unfolded_x = torch.nn.functional.unfold(x, block_size, stride=block_size)
-    return unfolded_x.view(n, c * block_size ** 2, h // block_size, w // block_size)
+def DownSamplingShuffle(x, scale=2):
+    _, _, h, w = x.shape
+    assert scale == 2
+    x1 = x[:, :, 0:h:2, 0:w:2]
+    x2 = x[:, :, 0:h:2, 1:w:2]
+    x3 = x[:, :, 1:h:2, 0:w:2]
+    x4 = x[:, :, 1:h:2, 1:w:2]
+
+    return torch.cat((x1, x2, x3, x4), 1)
+
 
 class LoosenMSE(nn.Module):
     def __init__(self, eps=0.01):
@@ -20,9 +26,29 @@ class LoosenMSE(nn.Module):
         return torch.mean(F.mse_loss(x, y, reduction='none') - self.eps)
 
 
-class pyramid_demo(nn.Module):
-    def __init__(self, pyr_num=1, block_size=2):
-        super(pyramid_demo, self).__init__()
+class slice_operation(nn.Module):
+    def __init__(self):
+        super(slice_operation, self).__init__()
+
+    def forward(self, grid, guidemap, align_corners=True):
+        N, _, H, W = guidemap.shape
+        hg, wg = torch.meshgrid([torch.arange(0, H), torch.arange(0, W)])
+        if torch.cuda.is_available():
+            hg = hg.type(torch.cuda.FloatTensor).repeat(N, 1, 1).unsqueeze(3) / (H - 1) * 2 - 1
+            wg = wg.type(torch.cuda.FloatTensor).repeat(N, 1, 1).unsqueeze(3) / (W - 1) * 2 - 1
+        else:
+            hg = hg.type(torch.FloatTensor).repeat(N, 1, 1).unsqueeze(3) / (H - 1) * 2 - 1
+            wg = wg.type(torch.FloatTensor).repeat(N, 1, 1).unsqueeze(3) / (W - 1) * 2 - 1
+        guidemap = guidemap * 2 - 1
+        guidemap = guidemap.permute(0, 2, 3, 1)
+        guidemap_guide = torch.cat([wg, hg, guidemap], dim=3).unsqueeze(1)
+        coeff = F.grid_sample(grid, guidemap_guide, padding_mode='border', align_corners=align_corners)
+        return coeff.squeeze(2)
+
+
+class pyramid_shuffle(nn.Module):
+    def __init__(self, pyr_num=3, block_size=2):
+        super(pyramid_shuffle, self).__init__()
         self.pyr_num = pyr_num
         self.block_size = block_size
 
@@ -32,7 +58,7 @@ class pyramid_demo(nn.Module):
         pyramids.append(x)
 
         for i in range(self.pyr_num):
-            p_down = space_to_depth(x, self.block_size)
+            p_down = DownSamplingShuffle(x, self.block_size)
             pyramids.append(p_down)
             x = p_down
 
@@ -80,7 +106,7 @@ class residual_block(nn.Module):
 
 
 class kernel_est(nn.Module):
-    def __init__(self, in_channels=64, channel=64, n_in=1, n_out=2, gz=1, stage=3, norm=nn.InstanceNorm2d):
+    def __init__(self, in_channels=64, channel=64, n_in=65, n_out=64, gz=1, stage=3, norm=nn.InstanceNorm2d):
         super(kernel_est, self).__init__()
         self.n_in = n_in
         self.n_out = n_out
@@ -124,7 +150,7 @@ class kernel_est(nn.Module):
 
         self.after = nn.Conv2d(
             in_channels=channel,
-            out_channels=self.gz*self.n_in*self.n_out,
+            out_channels=self.gz * self.n_in * self.n_out,
             kernel_size=1,
             padding=0
         )
@@ -145,31 +171,12 @@ class kernel_est(nn.Module):
         out = self.after(x)
         out = torch.stack(
             torch.split(out, self.n_in * self.n_out, dim=1),
-            dim=4
+            dim=2
         )
         return out
 
 
-class ma_conv_block(nn.Module):
-    def __init__(self, channel=64, gz=1, stage=3, group=64, norm=nn.InstanceNorm2d):
-        super(ma_conv_block, self).__init__()
-        self.channel = channel
-        self.gz = gz
-        self.n_in = 1
-        self.n_out = 2
-        self.group = group
-
-        self.block = nn.Sequential(
-                nn.AvgPool2d(2, 2),
-                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group, self.stage)
-            )
-
-    def forward(self, x):
-
-        return
-
-
-class illumiNet(BaseNet):
+class illumiNet(nn.Module):
     def __init__(self, in_channels=3, out_channels=1, norm=True):
         super(illumiNet, self).__init__()
         self.n_channels = in_channels
@@ -179,8 +186,6 @@ class illumiNet(BaseNet):
         self.down1 = Down(32, 64, norm=norm)
         self.down2 = Down(64, 128, norm=norm)
         self.down3 = Down(128, 128, norm=norm)
-
-        self.ma_conv = ma_conv_block()
 
         self.up1 = Up(256, 64, bilinear=True, norm=norm)
         self.up2 = Up(128, 32, bilinear=True, norm=norm)
@@ -200,58 +205,147 @@ class illumiNet(BaseNet):
         return logits
 
 
-# class preNet(nn.Module):
-#     def __init__(self, channel=64):
-#         super(preNet, self).__init__()
-#         self.pyrs_demo = pyramid_demo(3)
-#         self.
+class preNet(nn.Module):
+    def __init__(self, channel=64, block_num=3, scale=2):
+        super(preNet, self).__init__()
+        self.scale = scale
+        self.pyrs_shuffle = pyramid_shuffle(block_num, self.scale)
+        self.conv_pyramid = []
+        self.conv_pyramid.append(
+            nn.Sequential(
+                nn.Conv2d(
+                    in_channels=3,
+                    out_channels=channel,
+                    kernel_size=3,
+                    padding=1
+                ),
+                residual_block(channel)
+            )
+        )
+        self.conv_pyramid.append(
+            nn.Sequential(
+                nn.Conv2d(
+                    in_channels=3 * ((scale * 2) ** (i + 1)),
+                    out_channels=channel * (2 ** i),
+                    kernel_size=3,
+                    padding=1
+                ),
+                residual_block(channel * (2 ** i))
+            ) for i in range(3)
+        )
+
+    def forward(self, image_in):
+        pyrs = self.pyrs_demo(image_in)
+        outs = []
+        for i, image in enumerate(pyrs):
+            outs.append(self.conv_pyramid[i](image))
+        return outs, pyrs
 
 
 class denoNet(nn.Module):
     def __init__(self, channel=64, gz=1, stage=3, group=64, norm=nn.InstanceNorm2d):
         super(denoNet, self).__init__()
         self.channel = channel
+        self.stage = stage
         self.gz = gz
-        self.n_in = 1
-        self.n_out = 2
+        self.n_in = channel + 1
+        self.n_out = channel
         self.group = group
+        self.channel_i = [self.channel, self.channel, self.channel * 2, self.channel * 4]
+        self.group_i = [self.group, self.group, self.group * 2, self.group * 4]
 
-        self.blocks = [
+        self.pre_net_ill = preNet(channel, stage, 2)
+        self.pre_net_image = preNet(channel, stage, 2)
+
+        self.esti_blocks = [
             nn.Sequential(
                 nn.AvgPool2d(2, 2),
-                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group, self.stage)
-            ) for i in range(2)
+                kernel_est(self.channel_i[i], self.channel, self.n_in, self.n_out, self.gz * self.group_i[i], self.stage)
+            ) for i in range(4)
         ]
-        self.blocks.append(
+
+        # waiting for fix
+        # self.slice = slice_operation()
+        self.slice = nn.Upsample(2, mode='bilinear')
+
+        self.upsampling = nn.Upsample(2, mode='bilinear')
+
+        self.conv_pres = [
             nn.Sequential(
-                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group * 2, self.stage)
-            )
-        )
-        self.blocks.append(
+                nn.Conv2d(
+                    in_channels=self.channel_i[i],
+                    out_channels=self.channel_i[i],
+                    kernel_size=3,
+                    padding=1
+                ),
+                norm(self.channel_i[i]),
+                residual_block(self.channel_i[i]),
+                residual_block(self.channel_i[i])
+            ) for i in range(4)
+        ]
+        self.conv_after = [
             nn.Sequential(
-                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group * 4, self.stage)
-            )
-        )
+                residual_block(self.channel_i[i]),
+                residual_block(self.channel_i[i])
+            ) for i in range(4)
+        ]
 
-
-    def forward(self, inputs):
-
+    def matrix_multiplication(self, input, kernel):
 
         return
 
-class majitNet(nn.Module):
-    def __init__(self, channel=64):
-        super(majitNet, self).__init__()
+    def forward(self, image_in, ill):
+        # using ill to estimate kernel weights first
+        # try, where brighter, add more image_in msg to join ill for estimate kernel weights, later
+        ills, ill_pyrs = self.pre_net_ill(ill)
+        out0s, out0_pyrs = self.pre_net_image(image_in)
+
+        images = []  # 相反顺序
+
+        for i in range(self.stage + 1):
+            idx = self.stage - i
+            if i == 0:
+                img = out0s[idx]
+            else:
+                img = torch.cat([out0s[idx], self.upsampling(images[i - 1])], dim=1)
+            img = self.conv_pres[idx](img)
+            grid_esti = self.esti_blocks[idx](ills[idx])
+
+            grid_high_rev = self.slice(grid_esti)
+
+            image_i = []
+            for j in range(self.group_i[idx]):
+                image_i_j = self.matrix_multiplication(img, grid_high_rev)
+                image_i.append(image_i_j)
+            image_i = torch.cat(image_i, dim=1)
+
+            image_i = self.conv_after[idx](image_i)
+            images.append(image_i)
+
+        return images, out0_pyrs
+
+
+class maJitNet(nn.Module):
+    def __init__(self, channel=64, out_channels=3):
+        super(maJitNet, self).__init__()
 
         self.ill_branch = UNetIllumi()
         self.eps = 1e-3
         self.channel = channel
 
-        self.pyr_pre = pyramid_demo(3)
-
-        self.res_block = residual_block()
+        self.denoise_branch = denoNet(channel=channel)
 
         self.ill_loss = LoosenMSE()
+
+        self.conv_block = nn.Sequential(
+            residual_block(channel=self.channel),
+            nn.Conv2d(
+                in_channels=channel,
+                out_channels=out_channels,
+                kernel_size=3,
+                padding=1
+            )
+        )
 
     def load_ill_weight(self, weight_pth):
         state_dict = torch.load(weight_pth)
@@ -260,13 +354,12 @@ class majitNet(nn.Module):
         self.illumi_branch.requires_grad_(False)
         self.illumi_branch.eval()
 
-    def forward(self, x_in, x_gt=None):
+    def forward(self, x_in):
         ill = self.ill_branch(x_in)
         out0 = x_in / (ill + self.eps)
-        restor_loss = self.ill_loss(out0, x_gt)
-        restor_loss += self.ill_loss(x_in, x_gt * ill)
 
-        # using ill to estimate kernel weights
-        pyrs_i = self.pyr_pre(ill)
+        outputs, pyrs = self.denoise_branch(out0, ill)
+        image_out = self.conv_block(outputs[0])
+        image_out = pyrs[0] - image_out
 
-        return ill, out0
+        return ill, out0, image_out

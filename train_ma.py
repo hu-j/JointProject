@@ -37,7 +37,7 @@ def get_args():
     parser.add_argument("--tsize", default=640, type=int, help="test img size")
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
 
-    parser.add_argument('-m1', '--model1', type=str, default='EnhanceNet',
+    parser.add_argument('-m1', '--model1', type=str, default='maJitNet',
                         help='Model Name')
     parser.add_argument('-w1', '--ill_weight', type=str, default='./weights/UNetIllumi_003_101000.pth')
     parser.add_argument('-mdet', '--detect_weight', type=str, default='./weights/yolox_s.pth')
@@ -194,7 +194,7 @@ class ModelJT(nn.Module):
         #             targets[det_i, :obj_num, 1:5] = gt_output[:, 0:4] / gn
         #             targets[det_i, :obj_num, 0] = gt_output[:, 6]
 
-        ill, out1, image_out, l1_loss, psnr, ssim = self.enhan_model(
+        ill, out0, image_out = self.enhan_model(
             image_in, image_gt
         )
 
@@ -203,7 +203,9 @@ class ModelJT(nn.Module):
         ssim = SSIM1(image_out, image_gt)
         psnr = PSNR(image_out, image_gt)
 
-        return ill, out1, image_out, l1_loss, ssim, psnr
+        restor_loss = self.restor_loss(image_out, image_gt)
+
+        return ill, out0, image_out, restor_loss, ssim, psnr
 
         # # start detection
         # image_det, _, pad = self.resizeletterbox(image_out, opt.tsize)
@@ -358,7 +360,7 @@ def train(opt):
                             data, target = data.cuda(), target.cuda()
                         optimizer.zero_grad()
 
-                        ill, out1, image_out, l1_loss, ssim, psnr\
+                        ill, out1, image_out, restor_loss, ssim, psnr\
                             = model(data, target)
 
                         # evaluate
@@ -380,7 +382,7 @@ def train(opt):
                         #     loss = restor_loss + feature_losses
                         # else:
                         #     loss = restor_loss + feature_losses + det_loss * 0.1
-                        loss = l1_loss
+                        loss = restor_loss
 
                         loss.backward()
                         optimizer.step()
@@ -443,7 +445,7 @@ def train(opt):
                             data = data.cuda()
                             target = target.cuda()
 
-                        ill, out1, image_out, l1_loss, ssim, psnr \
+                        ill, out1, image_out, restor_loss, ssim, psnr \
                             = model(data, target)
 
                         # evaluate
@@ -461,7 +463,7 @@ def train(opt):
                         # saveLabeledImage(det_outputs, image_out, image_save_name=name[0] + '_out_labeled')
 
                         # feature_losses = feature_loss[0] + feature_loss[1] + feature_loss[2]
-                        loss = l1_loss
+                        loss = restor_loss
                         restor_loss_ls.append(loss.item())
                         # feature_loss_ls.append(feature_loss.item())
                         psnrs.append(psnr)
