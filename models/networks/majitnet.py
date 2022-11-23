@@ -2,13 +2,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from models import BaseNet
+from models import BaseNet, UNetIllumi
+from models.networks.modules import *
 
-
-# class depth_wise_block(nn.Module):
-#     def __init__(self):
-#         super(depth_wise_block, self).__init__()
-#
 
 def space_to_depth(x, block_size):
     n, c, h, w = x.size()
@@ -154,15 +150,61 @@ class kernel_est(nn.Module):
         return out
 
 
+class ma_conv_block(nn.Module):
+    def __init__(self, channel=64, gz=1, stage=3, group=64, norm=nn.InstanceNorm2d):
+        super(ma_conv_block, self).__init__()
+        self.channel = channel
+        self.gz = gz
+        self.n_in = 1
+        self.n_out = 2
+        self.group = group
+
+        self.block = nn.Sequential(
+                nn.AvgPool2d(2, 2),
+                kernel_est(self.channel, self.channel, self.n_in, self.n_out, self.gz * self.group, self.stage)
+            )
+
+    def forward(self, x):
+
+        return
+
+
 class illumiNet(BaseNet):
     def __init__(self, in_channels=3, out_channels=1, norm=True):
-        super(illumiNet, self).__init__(in_channels, out_channels, norm)
+        super(illumiNet, self).__init__()
+        self.n_channels = in_channels
+        self.n_classes = out_channels
+
+        self.inc = DoubleConv(in_channels, 32, norm=norm)
+        self.down1 = Down(32, 64, norm=norm)
+        self.down2 = Down(64, 128, norm=norm)
+        self.down3 = Down(128, 128, norm=norm)
+
+        self.ma_conv = ma_conv_block()
+
+        self.up1 = Up(256, 64, bilinear=True, norm=norm)
+        self.up2 = Up(128, 32, bilinear=True, norm=norm)
+        self.up3 = Up(64, 32, bilinear=True, norm=norm)
+        self.outc = OutConv(32, out_channels)
+
+    def forward(self, x):
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+
+        x = self.up1(x4, x3)
+        x = self.up2(x, x2)
+        x = self.up3(x, x1)
+        logits = self.outc(x)
+        return logits
 
 
-class preNet(nn.Module):
-    def __init__(self, channel=64):
-        super(preNet, self).__init__()
-        # self.+
+# class preNet(nn.Module):
+#     def __init__(self, channel=64):
+#         super(preNet, self).__init__()
+#         self.pyrs_demo = pyramid_demo(3)
+#         self.
 
 
 class denoNet(nn.Module):
@@ -195,22 +237,28 @@ class denoNet(nn.Module):
     def forward(self, inputs):
 
 
-
+        return
 
 class majitNet(nn.Module):
     def __init__(self, channel=64):
         super(majitNet, self).__init__()
 
-        self.ill_branch = illumiNet(3, 1)
+        self.ill_branch = UNetIllumi()
         self.eps = 1e-3
         self.channel = channel
 
-        self.pyr_pre = pyramid_demo(2)
-        self.pre = preNet(self.channel)
+        self.pyr_pre = pyramid_demo(3)
 
         self.res_block = residual_block()
 
         self.ill_loss = LoosenMSE()
+
+    def load_ill_weight(self, weight_pth):
+        state_dict = torch.load(weight_pth)
+        ret = self.illumi_branch.load_state_dict(state_dict)
+        print(ret)
+        self.illumi_branch.requires_grad_(False)
+        self.illumi_branch.eval()
 
     def forward(self, x_in, x_gt=None):
         ill = self.ill_branch(x_in)
@@ -218,9 +266,7 @@ class majitNet(nn.Module):
         restor_loss = self.ill_loss(out0, x_gt)
         restor_loss += self.ill_loss(x_in, x_gt * ill)
 
-        pyrs = self.pyr_pre(out0)
-        # fix texture
-
-
+        # using ill to estimate kernel weights
+        pyrs_i = self.pyr_pre(ill)
 
         return ill, out0

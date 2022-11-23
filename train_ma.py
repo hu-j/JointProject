@@ -39,7 +39,8 @@ def get_args():
 
     parser.add_argument('-m1', '--model1', type=str, default='EnhanceNet',
                         help='Model Name')
-    parser.add_argument('-mdet', '--detect_weight', type=str, default='./YOLOX/yolox_s.pth')
+    parser.add_argument('-w1', '--ill_weight', type=str, default='./weights/UNetIllumi_003_101000.pth')
+    parser.add_argument('-mdet', '--detect_weight', type=str, default='./weights/yolox_s.pth')
 
     parser.add_argument('--comment', type=str, default='trainTest',
                         help='Project comment')
@@ -91,10 +92,20 @@ class ModelJT(nn.Module):
         self.restoration_loss = models.MSPerL1Loss(channels=3)
         self.anchor_loss = anchorLoss()
 
+        self.enhan_model.load_ill_weight(opt.ill_weight)
+
+
     def load_detetction_weight(self, model, weight_pth):
         if model is not None:
             ckpt = torch.load(weight_pth)
             ret = model.load_state_dict(ckpt["model"])
+            print(ret)
+
+    def load_weight(self, model, weight_pth):
+        if model is not None:
+            state_dict = torch.load(weight_pth)
+            print(state_dict.keys())
+            ret = model.load_state_dict(state_dict, strict=True)
             print(ret)
 
     def normalize_tensor_mm(tensor):
@@ -183,7 +194,7 @@ class ModelJT(nn.Module):
         #             targets[det_i, :obj_num, 1:5] = gt_output[:, 0:4] / gn
         #             targets[det_i, :obj_num, 0] = gt_output[:, 6]
 
-        ill, out1, image_out, restor_loss1, ill_loss, l1_loss, psnr, ssim = self.enhan_model(
+        ill, out1, image_out, l1_loss, psnr, ssim = self.enhan_model(
             image_in, image_gt
         )
 
@@ -192,7 +203,7 @@ class ModelJT(nn.Module):
         ssim = SSIM1(image_out, image_gt)
         psnr = PSNR(image_out, image_gt)
 
-        return ill, out1, image_out, restor_loss1, ill_loss, l1_loss, ssim, psnr
+        return ill, out1, image_out, l1_loss, ssim, psnr
 
         # # start detection
         # image_det, _, pad = self.resizeletterbox(image_out, opt.tsize)
@@ -347,7 +358,7 @@ def train(opt):
                             data, target = data.cuda(), target.cuda()
                         optimizer.zero_grad()
 
-                        ill, out1, image_out, restor_loss1, ill_loss, l1_loss, ssim, psnr\
+                        ill, out1, image_out, l1_loss, ssim, psnr\
                             = model(data, target)
 
                         # evaluate
@@ -369,7 +380,7 @@ def train(opt):
                         #     loss = restor_loss + feature_losses
                         # else:
                         #     loss = restor_loss + feature_losses + det_loss * 0.1
-                        loss = restor_loss1 + ill_loss + l1_loss
+                        loss = l1_loss
 
                         loss.backward()
                         optimizer.step()
@@ -432,7 +443,7 @@ def train(opt):
                             data = data.cuda()
                             target = target.cuda()
 
-                        ill, out1, image_out, restor_loss1, ill_loss, l1_loss, ssim, psnr \
+                        ill, out1, image_out, l1_loss, ssim, psnr \
                             = model(data, target)
 
                         # evaluate
@@ -450,7 +461,7 @@ def train(opt):
                         # saveLabeledImage(det_outputs, image_out, image_save_name=name[0] + '_out_labeled')
 
                         # feature_losses = feature_loss[0] + feature_loss[1] + feature_loss[2]
-                        loss = restor_loss1 + ill_loss + l1_loss
+                        loss = l1_loss
                         restor_loss_ls.append(loss.item())
                         # feature_loss_ls.append(feature_loss.item())
                         psnrs.append(psnr)

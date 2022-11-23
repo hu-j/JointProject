@@ -4,6 +4,8 @@ import torch
 from models.metrics import PSNR, SSIM1
 from models.losses import *
 from models.networks.modules import *
+from models.networks.unet_2d_illumi import UNetIllumi
+
 
 class BaseNet(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, norm=True):
@@ -47,7 +49,7 @@ class EnhanceNet(nn.Module):
         super(EnhanceNet, self).__init__()
         self.feature_num = 64
 
-        self.illumi_branch = BaseNet(in_channels=3, out_channels=1)
+        self.illumi_branch = UNetIllumi()
 
         self.intro = nn.Sequential(
             nn.Conv2d(in_channels, 64, 3, 1, 1),
@@ -77,16 +79,24 @@ class EnhanceNet(nn.Module):
         self.lime_loss = LIMELoss2()
         self.denoise_loss = nn.MSELoss()
         # self.tv_loss = TVLoss()
-        self.eps = 1e-6
+        self.eps = 1e-3
+
+    def load_ill_weight(self, weight_pth):
+        state_dict = torch.load(weight_pth)
+        ret = self.illumi_branch.load_state_dict(state_dict)
+        print(ret)
+        self.illumi_branch.requires_grad_(False)
+        self.illumi_branch.eval()
 
     def forward(self, image_in, image_gt, training=True):
-        ill = self.illumi_branch(image_in)
-        out1 = image_in / (ill + self.eps)
-        r_gt = image_gt * ill
-        restor_loss1 = self.illumi_loss(out1, image_gt)
-        restor_loss1 += self.illumi_loss(image_in, r_gt)
 
-        ill_loss = self.lime_loss(ill, self.lumi(image_in))
+        ill = self.illumi_branch(image_in)**0.8
+        out1 = image_in / (ill + self.eps)
+        # r_gt = image_gt * ill
+        # restor_loss1 = self.illumi_loss(out1, image_gt)
+        # restor_loss1 += self.illumi_loss(image_in, r_gt)
+
+        # ill_loss = self.lime_loss(ill, self.lumi(image_in))
 
         res_input = self.intro(out1)
 
@@ -97,7 +107,8 @@ class EnhanceNet(nn.Module):
         psnr = PSNR(image_out, image_gt)
         ssim = SSIM1(image_out, image_gt)
 
-        return ill, out1, image_out, restor_loss1, ill_loss, l1_loss, psnr, ssim
+        # return ill, out1, image_out, restor_loss1, ill_loss, l1_loss, psnr, ssim
+        return ill, out1, image_out, l1_loss, psnr, ssim
 
 
 class FixJTNet(nn.Module):
