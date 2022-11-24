@@ -194,9 +194,7 @@ class ModelJT(nn.Module):
         #             targets[det_i, :obj_num, 1:5] = gt_output[:, 0:4] / gn
         #             targets[det_i, :obj_num, 0] = gt_output[:, 6]
 
-        ill, out0, image_out = self.enhan_model(
-            image_in, image_gt
-        )
+        ill, out0, image_out = self.enhan_model(image_in)
 
         # fix
         # image_out = self.fix_model(image_out)
@@ -312,6 +310,7 @@ def train(opt):
 
     if opt.num_gpus > 0:
         model = model.cuda()
+        model.enhan_model.cuda()
         if opt.num_gpus > 1:
             model = nn.DataParallel(model)
 
