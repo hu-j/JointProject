@@ -271,18 +271,24 @@ class denoNet(nn.Module):
         self.esti_blocks = [
             nn.Sequential(
                 nn.AvgPool2d(2, 2),
-                kernel_est(self.channel_i[i], self.channel, self.channel_i[i] + self.b_num, self.channel_i[i],
-                           self.gz * self.group_i[i],
-                           # kernel_est(self.channel_i[i], self.channel, self.n_in, self.n_out, self.gz * self.group_i[i],
+                # kernel_est(self.channel_i[i], self.channel, self.channel_i[i] + self.b_num, self.channel_i[i],
+                #            self.gz * self.group_i[i],
+                kernel_est(self.channel_i[i], self.channel, self.n_in, self.n_out, self.gz * self.group_i[i],
                            self.stage)
             ).cuda() for i in range(4)
         ]
 
-        # waiting for fix
-        # self.slice = slice_operation()
+        self.acts = [
+            nn.Sequential(
+                norm(self.channel_i[i]),
+                nn.PReLU()
+            ).cuda() for i in range(4)
+        ]
+        self.ratios = [nn.Parameter(torch.tensor(0.), requires_grad=True).cuda() for i in range(4)]
+
         self.slice = slice()
 
-        self.upsampling = nn.Upsample(2, mode='bilinear')
+        # self.upsampling = nn.Upsample(2, mode='bilinear')
 
         self.conv_pres = [
             nn.Sequential(
@@ -304,9 +310,13 @@ class denoNet(nn.Module):
             ).cuda() for i in range(4)
         ]
 
-    def matrix_multiplication(self, input, kernel):
-
-        return
+    def matrix_multiplication(self, input, grid):
+        _, c, _, _ = grid.shape
+        _, c0, _, _ = input.shape
+        # grid[b,c,h,w]
+        # output = torch.sum(input * grid[:, 0:c0, :, :], dim=1, keepdim=True) + grid[:, c0:c, :, :]
+        output = torch.sum(input * grid[:, 0:c, :, :], dim=1, keepdim=True)
+        return output
 
     def forward(self, image_in, ill):
         # using ill to estimate kernel weights first
@@ -321,7 +331,9 @@ class denoNet(nn.Module):
             if i == 0:
                 img = out0s[idx]
             else:
-                img = torch.cat([out0s[idx], self.upsampling(images[i - 1])], dim=1)
+                image_before = F.interpolate(images[i - 1], scale_factor=2, mode='bicubic', align_corners=True)
+                img = torch.cat([out0s[idx], image_before], dim=1)
+                # img = torch.cat([out0s[idx], self.upsampling(images[i - 1])], dim=1)
             # img的in_channel是不是需要修改
             img = self.conv_pres[idx](img)
             grid_esti = self.esti_blocks[idx](ills[idx])
@@ -333,14 +345,17 @@ class denoNet(nn.Module):
             guide = img.permute(0, 2, 3, 1)
             grid_esti = grid_esti.permute(0, 2, 3, 4, 1)
             for j in range(group):
-                guide_i = torch.clamp(
-                    guide[:, :, :, j * (self.channel_i[idx] + 1): (j + 1) * (self.channel_i[idx] + 1)], 0, 1)
+                guide_i = torch.clamp(guide[:, :, :, j], 0, 1)
                 grid_esti_i = grid_esti[:, :, :, :, j:j + 1]
                 slice_grid = self.slice(grid_esti_i, guide_i)
+                slice_grid = slice_grid.permute(0, 3, 1, 2)
 
                 image_i_j = self.matrix_multiplication(img, slice_grid)
                 image_i.append(image_i_j)
+
             image_i = torch.cat(image_i, dim=1)
+            image_i = self.acts[idx](image_i)
+            image_i = img + image_i * self.ratios[idx]
 
             image_i = self.conv_after[idx](image_i)
             images.append(image_i)
