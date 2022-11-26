@@ -64,8 +64,8 @@ def get_args():
     parser.add_argument('--data_path', type=str, default='/home/xteam/hj/dataset/LOLDataset',
                         help='the root folder of dataset')
     parser.add_argument('--small', action='store_true')
-    parser.add_argument('--log_path', type=str, default='aTry/1/')
-    parser.add_argument('--saved_path', type=str, default='aTry/1/')
+    parser.add_argument('--log_path', type=str, default='aTry/3/')
+    parser.add_argument('--saved_path', type=str, default='aTry/3/')
     args = parser.parse_args()
     return args
 
