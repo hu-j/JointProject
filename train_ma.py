@@ -59,13 +59,13 @@ def get_args():
     parser.add_argument('--optim', type=str, default='adam', help='select optimizer for training, '
                                                                   'suggest using \'admaw\' until the'
                                                                   ' very final stage then switch to \'sgd\'')
-    parser.add_argument('--num_epochs', type=int, default=100)
-    parser.add_argument('--val_interval', type=int, default=10, help='Number of epoches between valing phases')
+    parser.add_argument('--num_epochs', type=int, default=151)
+    parser.add_argument('--val_interval', type=int, default=5, help='Number of epoches between valing phases')
     parser.add_argument('--data_path', type=str, default='/home/xteam/hj/dataset/LOLDataset',
                         help='the root folder of dataset')
     parser.add_argument('--small', action='store_true')
-    parser.add_argument('--log_path', type=str, default='aTry/3/')
-    parser.add_argument('--saved_path', type=str, default='aTry/3/')
+    parser.add_argument('--log_path', type=str, default='aTry/grid3/')
+    parser.add_argument('--saved_path', type=str, default='aTry/grid3/')
     args = parser.parse_args()
     return args
 
@@ -194,7 +194,7 @@ class ModelJT(nn.Module):
         #             targets[det_i, :obj_num, 1:5] = gt_output[:, 0:4] / gn
         #             targets[det_i, :obj_num, 0] = gt_output[:, 6]
 
-        ill, out0, image_out = self.enhan_model(image_in)
+        ill, out0, noise, image_out = self.enhan_model(image_in)
 
         # fix
         # image_out = self.fix_model(image_out)
@@ -203,7 +203,7 @@ class ModelJT(nn.Module):
 
         restor_loss = self.restor_loss(image_out, image_gt)
 
-        return ill, out0, image_out, restor_loss, ssim, psnr
+        return ill, out0, noise, image_out, restor_loss, ssim, psnr
 
         # # start detection
         # image_det, _, pad = self.resizeletterbox(image_out, opt.tsize)
@@ -359,7 +359,7 @@ def train(opt):
                             data, target = data.cuda(), target.cuda()
                         optimizer.zero_grad()
 
-                        ill, out1, image_out, restor_loss, ssim, psnr\
+                        ill, out1, _, image_out, restor_loss, ssim, psnr\
                             = model(data, target)
 
                         # evaluate
@@ -444,7 +444,7 @@ def train(opt):
                             data = data.cuda()
                             target = target.cuda()
 
-                        ill, out1, image_out, restor_loss, ssim, psnr \
+                        ill, out1, noise, image_out, restor_loss, ssim, psnr \
                             = model(data, target)
 
                         # evaluate
@@ -456,6 +456,7 @@ def train(opt):
 
                         saver.save_image(image_out, name=os.path.splitext(name[0])[0] + '_out')
                         saver.save_image(out1, name=os.path.splitext(name[0])[0] + '_out1')
+                        saver.save_image(noise, name=os.path.splitext(name[0])[0] + '_noise')
                         saver.save_image(ill, name=os.path.splitext(name[0])[0] + '_i')
                         saver.save_image(target, name=os.path.splitext(name[0])[0] + '_gt')
                         # saveLabeledImage(gt_outputs, target, image_save_name=name[0] + '_gt_labeled')

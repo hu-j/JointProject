@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -5,6 +7,7 @@ import torch.nn.functional as F
 from models import BaseNet, UNetIllumi
 from models.networks.modules import *
 from models.networks.slice import batch_bilateral_slice
+from tools import saver
 
 
 def DownSamplingShuffle(x, scale=2):
@@ -152,14 +155,14 @@ class residual_block(nn.Module):
 
     def forward(self, x):
         y = x
-        # outputs = y + self.inbo_block(x)
-        outputs = y + self.block(x)
+        outputs = y + self.inbo_block(x)
+        # outputs = y + self.block(x)
         return outputs
 
 
-class kernel_est(nn.Module):
+class kernel_est2(nn.Module):
     def __init__(self, in_channels=64, channel=64, n_in=65, n_out=1, gz=1, stage=3, norm=nn.InstanceNorm2d):
-        super(kernel_est, self).__init__()
+        super(kernel_est2, self).__init__()
         self.n_in = n_in
         self.n_out = n_out
         self.gz = gz
@@ -266,34 +269,53 @@ class illumiNet(nn.Module):
         return logits
 
 
-class preNet(nn.Module):
+class preNet2(nn.Module):
     def __init__(self, in_channel=1, channel=64, block_num=3, scale=2):
-        super(preNet, self).__init__()
+        super(preNet2, self).__init__()
         self.scale = scale
         self.pyrs_shuffle = pyramid_shuffle(block_num, self.scale)
-        self.conv_pyramid = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(
-                    in_channels=in_channel,
-                    out_channels=channel,
-                    kernel_size=3,
-                    padding=1
-                ),
-                residual_block(channel)
-            )
-        ])
-        for i in range(3):
-            self.conv_pyramid.append(
-                nn.Sequential(
-                    nn.Conv2d(
-                        in_channels=in_channel * ((scale * 2) ** (i + 1)),
-                        out_channels=channel * (2 ** i),
-                        kernel_size=3,
-                        padding=1
-                    ),
-                    residual_block(channel * (2 ** i))
-                )
-            )
+        self.conv_pyramid = []
+        self.conv_pyramid1 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channel,
+                out_channels=channel,
+                kernel_size=3,
+                padding=1
+            ),
+            residual_block(channel)
+        )
+        self.conv_pyramid.append(self.conv_pyramid1)
+        self.conv_pyramid2 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channel * 4,
+                out_channels=channel,
+                kernel_size=3,
+                padding=1
+            ),
+            residual_block(channel)
+        )
+        self.conv_pyramid3 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channel * 16,
+                out_channels=channel * 2,
+                kernel_size=3,
+                padding=1
+            ),
+            residual_block(channel * 2)
+        )
+        self.conv_pyramid4 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channel * 64,
+                out_channels=channel * 4,
+                kernel_size=3,
+                padding=1
+            ),
+            residual_block(channel * 4)
+        )
+
+        self.conv_pyramid.append(self.conv_pyramid2)
+        self.conv_pyramid.append(self.conv_pyramid3)
+        self.conv_pyramid.append(self.conv_pyramid4)
 
     def forward(self, image_in):
         pyrs = self.pyrs_shuffle(image_in)
@@ -303,9 +325,9 @@ class preNet(nn.Module):
         return outs, pyrs
 
 
-class denoNet(nn.Module):
+class denoNet2(nn.Module):
     def __init__(self, channel=64, gz=1, stage=3, group=64, norm=nn.InstanceNorm2d):
-        super(denoNet, self).__init__()
+        super(denoNet2, self).__init__()
         self.channel = channel
         self.stage = stage
         self.gz = gz
@@ -316,49 +338,124 @@ class denoNet(nn.Module):
         self.channel_i = [self.channel, self.channel, self.channel * 2, self.channel * 4]
         self.group_i = [self.group, self.group, self.group * 2, self.group * 4]
 
-        self.pre_net_ill = preNet(1, channel, stage, 2)
-        self.pre_net_image = preNet(3, channel, stage, 2)
+        self.pre_net_ill = preNet2(1, channel, stage, 2)
+        self.pre_net_image = preNet2(3, channel, stage, 2)
 
-        self.esti_blocks = nn.ModuleList([
-            nn.Sequential(
-                nn.AvgPool2d(2, 2),
-                # kernel_est(self.channel_i[i], self.channel, self.channel_i[i] + self.b_num, self.channel_i[i],
-                #            self.gz * self.group_i[i],
-                kernel_est(self.channel_i[i], self.channel, self.n_in, self.n_out, self.gz * self.group_i[i],
-                           # self.stage)
-                           2)
-            ) for i in range(4)
-        ])
+        self.esti_block0 = nn.Sequential(
+            nn.AvgPool2d(2, 2),
+            kernel_est2(self.channel_i[0], self.channel, self.n_in, self.n_out, self.gz * self.group_i[0],
+                        self.stage)
+        )
+        self.esti_block1 = nn.Sequential(
+            nn.AvgPool2d(2, 2),
+            kernel_est2(self.channel_i[1], self.channel, self.n_in, self.n_out, self.gz * self.group_i[1],
+                        self.stage)
+        )
+        self.esti_block2 = nn.Sequential(
+            nn.AvgPool2d(2, 2),
+            kernel_est2(self.channel_i[2], self.channel, self.n_in, self.n_out, self.gz * self.group_i[2],
+                        self.stage)
+        )
+        self.esti_block3 = nn.Sequential(
+            nn.AvgPool2d(2, 2),
+            kernel_est2(self.channel_i[3], self.channel, self.n_in, self.n_out, self.gz * self.group_i[3],
+                        self.stage)
+        )
 
-        self.acts = nn.ModuleList([
-            nn.Sequential(
-                norm(self.channel_i[i]),
-                nn.LeakyReLU()
-            ) for i in range(4)
-        ])
-        self.ratios = nn.Parameter(torch.ones(4))
+        self.esti_blocks = [self.esti_block0, self.esti_block1, self.esti_block2, self.esti_block3]
+
+        self.act0 = nn.Sequential(
+            norm(self.channel_i[0]),
+            nn.LeakyReLU()
+        )
+        self.act1 = nn.Sequential(
+            norm(self.channel_i[1]),
+            nn.LeakyReLU()
+        )
+        self.act2 = nn.Sequential(
+            norm(self.channel_i[2]),
+            nn.LeakyReLU()
+        )
+        self.act3 = nn.Sequential(
+            norm(self.channel_i[3]),
+            nn.LeakyReLU()
+        )
+
+        self.acts = [self.act0, self.act1, self.act2, self.act3]
+
+        # self.ratios = [nn.Parameter(torch.tensor(0.), requires_grad=True).cuda() for i in range(4)]
+        self.ratio0 = nn.Parameter(torch.tensor(0.), requires_grad=True)
+        self.ratio1 = nn.Parameter(torch.tensor(0.), requires_grad=True)
+        self.ratio2 = nn.Parameter(torch.tensor(0.), requires_grad=True)
+        self.ratio3 = nn.Parameter(torch.tensor(0.), requires_grad=True)
+        self.ratios = [self.ratio0, self.ratio1, self.ratio2, self.ratio3]
 
         self.slice = slice()
 
-        self.conv_pres = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(
-                    in_channels=self.channel_i[i] if i == 3 else self.channel_i[i] + self.channel_i[i + 1],
-                    out_channels=self.channel_i[i],
-                    kernel_size=3,
-                    padding=1
-                ),
-                norm(self.channel_i[i]),
-                residual_block(self.channel_i[i]),
-                residual_block(self.channel_i[i])
-            ) for i in range(4)
-        ])
-        self.conv_after = nn.ModuleList([
-            nn.Sequential(
-                residual_block(self.channel_i[i]),
-                residual_block(self.channel_i[i])
-            ) for i in range(4)
-        ])
+        self.conv_pres0 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=self.channel_i[0] + self.channel_i[1],
+                out_channels=self.channel_i[0],
+                kernel_size=3,
+                padding=1
+            ),
+            norm(self.channel_i[0]),
+            residual_block(self.channel_i[0]),
+            residual_block(self.channel_i[0])
+        )
+        self.conv_pres1 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=self.channel_i[1] + self.channel_i[2],
+                out_channels=self.channel_i[1],
+                kernel_size=3,
+                padding=1
+            ),
+            norm(self.channel_i[1]),
+            residual_block(self.channel_i[1]),
+            residual_block(self.channel_i[1])
+        )
+        self.conv_pres2 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=self.channel_i[2] + self.channel_i[3],
+                out_channels=self.channel_i[2],
+                kernel_size=3,
+                padding=1
+            ),
+            norm(self.channel_i[2]),
+            residual_block(self.channel_i[2]),
+            residual_block(self.channel_i[2])
+        )
+        self.conv_pres3 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=self.channel_i[3],
+                out_channels=self.channel_i[3],
+                kernel_size=3,
+                padding=1
+            ),
+            norm(self.channel_i[3]),
+            residual_block(self.channel_i[3]),
+            residual_block(self.channel_i[3])
+        )
+        self.conv_pres = [self.conv_pres0, self.conv_pres1, self.conv_pres2, self.conv_pres3]
+
+        self.conv_after0 = nn.Sequential(
+            residual_block(self.channel_i[0]),
+            residual_block(self.channel_i[0])
+        )
+        self.conv_after1 = nn.Sequential(
+            residual_block(self.channel_i[1]),
+            residual_block(self.channel_i[1])
+        )
+        self.conv_after2 = nn.Sequential(
+            residual_block(self.channel_i[2]),
+            residual_block(self.channel_i[2])
+        )
+        self.conv_after3 = nn.Sequential(
+            residual_block(self.channel_i[3]),
+            residual_block(self.channel_i[3])
+        )
+
+        self.conv_after = [self.conv_after0, self.conv_after1, self.conv_after2, self.conv_after3]
 
     def matrix_multiplication(self, input, grid):
         _, c, _, _ = grid.shape
@@ -373,7 +470,7 @@ class denoNet(nn.Module):
         ills, _ = self.pre_net_ill(ill)
         out0s, out0_pyrs = self.pre_net_image(image_in)
 
-        images = []  # 相反顺序存储
+        images = []  # 相反顺序
 
         for i in range(self.stage + 1):
             idx = self.stage - i
@@ -387,7 +484,8 @@ class denoNet(nn.Module):
                     ],
                     dim=1)
             img = self.conv_pres[idx](img)
-            grid_esti = self.esti_blocks[idx](ills[idx])
+            # grid_esti = self.esti_blocks[idx](ills[idx])
+            grid_esti = self.esti_blocks[idx](out0s[idx])
 
             image_i = []
             group = self.group_i[idx]
@@ -403,11 +501,11 @@ class denoNet(nn.Module):
 
             image_i = torch.cat(image_i, dim=1)
             image_i = self.acts[idx](image_i)
+            image_i = torch.clamp(image_i, -1., 1.)
             image_i = img + image_i * self.ratios[idx]
-
-            image_i = self.conv_after[idx](image_i)
+            if idx != 0:
+                image_i = self.conv_after[idx](image_i)
             images.append(image_i)
-            del image_i
 
         return images, out0_pyrs
     # def forward(self, image_in, ill):
@@ -430,8 +528,8 @@ class denoNet(nn.Module):
     #                 ],
     #                 dim=1)
     #             # img = torch.cat([out0s[idx], self.upsampling(images[i - 1])], dim=1)
-    #         img = self.conv_pres[idx](img)
-    #         img = self.conv_after[idx](img)
+    #         img0 = self.conv_pres[idx](img)
+    #         img0 = self.conv_after[idx](img0)
     #         # grid_esti = self.esti_blocks[idx](ills[idx])
     #         #
     #         # image_i = []
@@ -448,8 +546,9 @@ class denoNet(nn.Module):
     #         #
     #         # image_i = torch.cat(image_i, dim=1)
     #         # image_i = self.acts[idx](image_i)
+    #         # img0 = self.conv_try[idx](img)
     #
-    #         image_i = out0s[idx] + img * self.ratios[idx]
+    #         image_i = out0s[idx] + img0 * self.ratios[idx]
     #
     #         # image_i = self.conv_after[idx](image_i)
     #         images.append(image_i)
@@ -458,15 +557,15 @@ class denoNet(nn.Module):
     #     return images, out0_pyrs
 
 
-class maJitNet(nn.Module):
+class maJitNet2(nn.Module):
     def __init__(self, channel=64, out_channels=3):
-        super(maJitNet, self).__init__()
+        super(maJitNet2, self).__init__()
 
         self.ill_branch = UNetIllumi()
         self.eps = 1e-3
         self.channel = channel
 
-        self.denoise_branch = denoNet(channel=channel)
+        self.denoise_branch = denoNet2(channel=channel)
 
         self.ill_loss = LoosenMSE()
 
@@ -485,7 +584,6 @@ class maJitNet(nn.Module):
         ret = self.ill_branch.load_state_dict(state_dict)
         print(ret)
         self.ill_branch.requires_grad_(False)
-
 
     def forward(self, x_in):
         self.ill_branch.eval()
